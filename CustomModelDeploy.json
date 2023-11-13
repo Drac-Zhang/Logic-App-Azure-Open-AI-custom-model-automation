@@ -1,0 +1,726 @@
+{
+	"definition": {
+		"$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+		"actions": {
+			"Create_SAS_URI_by_path_(V2)": {
+				"inputs": {
+					"body": {
+						"Permissions": "Read"
+					},
+					"host": {
+						"connection": {
+							"name": "@parameters('$connections')['azureblob']['connectionId']"
+						}
+					},
+					"method": "post",
+					"path": "/v2/datasets/@{encodeURIComponent('AccountNameFromSettings')}/CreateSharedLinkByPath",
+					"queries": {
+						"path": "@body('Parse_JSON')?['Path']"
+					}
+				},
+				"runAfter": {
+					"Parse_JSON": [
+						"Succeeded"
+					]
+				},
+				"type": "ApiConnection"
+			},
+			"Get_entity_(V2)_-_Latest_Dataset": {
+				"inputs": {
+					"host": {
+						"connection": {
+							"name": "@parameters('$connections')['azuretables']['connectionId']"
+						}
+					},
+					"method": "get",
+					"path": "/v2/storageAccounts/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/tables/@{encodeURIComponent('GeneratedData')}/entities(PartitionKey='@{encodeURIComponent('LatestDataset')}',RowKey='@{encodeURIComponent('LatestDataset')}')"
+				},
+				"runAfter": {
+					"Initialize_variable_-_Deployment_Name": [
+						"Succeeded"
+					]
+				},
+				"type": "ApiConnection"
+			},
+			"HTTP_-_Create_Deployment": {
+				"inputs": {
+					"authentication": {
+						"type": "ManagedServiceIdentity"
+					},
+					"body": {
+						"displayName": "@{variables('DeploymentName')}",
+						"properties": {
+							"dynamicThrottlingEnabled": true,
+							"model": {
+								"format": "OpenAI",
+								"name": "@{outputs('Compose_-_Get_Model_Name')}",
+								"version": "1"
+							},
+							"raiPolicyName": "Microsoft.Default",
+							"versionUpgradeOption": "NoAutoUpgrade"
+						},
+						"sku": {
+							"capacity": 50,
+							"name": "Standard"
+						}
+					},
+					"method": "PUT",
+					"uri": "@{variables('ManagementUrl')}/deployments/@{variables('DeploymentName')}?api-version=2023-10-01-preview"
+				},
+				"runAfter": {
+					"Scope_-_Deployment": [
+						"Succeeded"
+					]
+				},
+				"type": "Http"
+			},
+			"Initialize_variable_-_Deployment_Name": {
+				"inputs": {
+					"variables": [
+						{
+							"name": "DeploymentName",
+							"type": "string",
+							"value": "Test"
+						}
+					]
+				},
+				"runAfter": {
+					"Initialize_variable_-_Uploading_Status": [
+						"Succeeded"
+					]
+				},
+				"type": "InitializeVariable"
+			},
+			"Initialize_variable_-_Management_Url": {
+				"inputs": {
+					"variables": [
+						{
+							"name": "ManagementUrl",
+							"type": "string",
+							"value": "https://management.azure.com/subscriptions/[Sub ID]/resourceGroups/[RG]/providers/Microsoft.CognitiveServices/accounts/@{variables('OpenAIName')}"
+						}
+					]
+				},
+				"runAfter": {
+					"Initialize_variable_-_OpenAI_name": [
+						"Succeeded"
+					]
+				},
+				"type": "InitializeVariable"
+			},
+			"Initialize_variable_-_Model_Creation_Status": {
+				"inputs": {
+					"variables": [
+						{
+							"name": "ModelCreationStatus",
+							"type": "string",
+							"value": "running"
+						}
+					]
+				},
+				"runAfter": {
+					"Scope_-_Uploading_Dataset": [
+						"Succeeded"
+					]
+				},
+				"type": "InitializeVariable"
+			},
+			"Initialize_variable_-_OpenAI_name": {
+				"inputs": {
+					"variables": [
+						{
+							"name": "OpenAIName",
+							"type": "string",
+							"value": "[OpenAIName]"
+						}
+					]
+				},
+				"runAfter": {},
+				"type": "InitializeVariable"
+			},
+			"Initialize_variable_-_Uploading_Status": {
+				"inputs": {
+					"variables": [
+						{
+							"name": "UploadStatus",
+							"type": "string",
+							"value": "running"
+						}
+					]
+				},
+				"runAfter": {
+					"Initialize_variable_-_Management_Url": [
+						"Succeeded"
+					]
+				},
+				"type": "InitializeVariable"
+			},
+			"Parse_JSON": {
+				"inputs": {
+					"content": "@body('Get_entity_(V2)_-_Latest_Dataset')",
+					"schema": {
+						"properties": {
+							"Name": {
+								"type": "string"
+							},
+							"Path": {
+								"type": "string"
+							}
+						},
+						"type": "object"
+					}
+				},
+				"runAfter": {
+					"Get_entity_(V2)_-_Latest_Dataset": [
+						"Succeeded"
+					]
+				},
+				"type": "ParseJson"
+			},
+			"Scope_-_Create_Custom_Model": {
+				"actions": {
+					"HTTP_-_Create_Model": {
+						"inputs": {
+							"authentication": {
+								"audience": "https://cognitiveservices.azure.com",
+								"type": "ManagedServiceIdentity"
+							},
+							"body": {
+								"model": "gpt-35-turbo-0613",
+								"training_file": "@{body('Parse_JSON_-_File_ID')?['id']}"
+							},
+							"method": "POST",
+							"uri": "https://@{variables('OpenAIName')}.openai.azure.com/openai/fine_tuning/jobs?api-version=2023-09-15-preview"
+						},
+						"runAfter": {},
+						"type": "Http"
+					},
+					"Parse_JSON_-_Model_Creation": {
+						"inputs": {
+							"content": "@body('HTTP_-_Create_Model')",
+							"schema": {
+								"properties": {
+									"id": {
+										"type": "string"
+									},
+									"model": {
+										"type": "string"
+									},
+									"status": {
+										"type": "string"
+									},
+									"training_file": {
+										"type": "string"
+									}
+								},
+								"type": "object"
+							}
+						},
+						"runAfter": {
+							"HTTP_-_Create_Model": [
+								"Succeeded"
+							]
+						},
+						"type": "ParseJson"
+					},
+					"Until_-_Waiting_training": {
+						"actions": {
+							"Delay_-_5_minutes": {
+								"inputs": {
+									"interval": {
+										"count": 5,
+										"unit": "Minute"
+									}
+								},
+								"runAfter": {},
+								"type": "Wait"
+							},
+							"Filter_array_-_Filter_for_deployment": {
+								"inputs": {
+									"from": "@body('Parse_JSON_-_Mode_Creation_Status')?['data']",
+									"where": "@equals(item()?['id'], body('Parse_JSON_-_Model_Creation')?['id'])"
+								},
+								"runAfter": {
+									"Parse_JSON_-_Mode_Creation_Status": [
+										"Succeeded"
+									]
+								},
+								"type": "Query"
+							},
+							"For_each_-_Deployment": {
+								"actions": {
+									"Set_variable": {
+										"inputs": {
+											"name": "ModelCreationStatus",
+											"value": "@items('For_each_-_Deployment')?['status']"
+										},
+										"runAfter": {},
+										"type": "SetVariable"
+									}
+								},
+								"foreach": "@body('Filter_array_-_Filter_for_deployment')",
+								"runAfter": {
+									"Filter_array_-_Filter_for_deployment": [
+										"Succeeded"
+									]
+								},
+								"type": "Foreach"
+							},
+							"HTTP_-_Model_Deploying_Status": {
+								"inputs": {
+									"authentication": {
+										"audience": "https://cognitiveservices.azure.com",
+										"type": "ManagedServiceIdentity"
+									},
+									"method": "GET",
+									"uri": "https://@{variables('OpenAIName')}.openai.azure.com/openai/fine_tuning/jobs?api-version=2023-09-15-preview"
+								},
+								"runAfter": {
+									"Delay_-_5_minutes": [
+										"Succeeded"
+									]
+								},
+								"type": "Http"
+							},
+							"Parse_JSON_-_Mode_Creation_Status": {
+								"inputs": {
+									"content": "@body('HTTP_-_Model_Deploying_Status')",
+									"schema": {
+										"properties": {
+											"data": {
+												"items": {
+													"properties": {
+														"fine_tuned_model": {
+															"type": "string"
+														},
+														"id": {
+															"type": "string"
+														},
+														"model": {
+															"type": "string"
+														},
+														"status": {
+															"type": "string"
+														},
+														"training_file": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"status",
+														"model",
+														"training_file",
+														"id"
+													],
+													"type": "object"
+												},
+												"type": "array"
+											}
+										},
+										"type": "object"
+									}
+								},
+								"runAfter": {
+									"HTTP_-_Model_Deploying_Status": [
+										"Succeeded"
+									]
+								},
+								"type": "ParseJson"
+							}
+						},
+						"expression": "@equals(variables('ModelCreationStatus'), 'succeeded')",
+						"limit": {
+							"count": 200,
+							"timeout": "PT12H"
+						},
+						"runAfter": {
+							"Parse_JSON_-_Model_Creation": [
+								"Succeeded"
+							]
+						},
+						"type": "Until"
+					}
+				},
+				"runAfter": {
+					"Initialize_variable_-_Model_Creation_Status": [
+						"Succeeded"
+					]
+				},
+				"type": "Scope"
+			},
+			"Scope_-_Deployment": {
+				"actions": {
+					"Delay_2": {
+						"inputs": {
+							"interval": {
+								"count": 5,
+								"unit": "Minute"
+							}
+						},
+						"runAfter": {
+							"For_each_2": [
+								"Succeeded"
+							]
+						},
+						"type": "Wait"
+					},
+					"Filter_array_-_Existing_Deployments": {
+						"inputs": {
+							"from": "@body('Parse_JSON_-_Existing_Deployments')?['value']",
+							"where": "@equals(item()?['name'], variables('DeploymentName'))"
+						},
+						"runAfter": {
+							"Parse_JSON_-_Existing_Deployments": [
+								"Succeeded"
+							]
+						},
+						"type": "Query"
+					},
+					"For_each_2": {
+						"actions": {
+							"HTTP_-_Delete_existing_deployment": {
+								"inputs": {
+									"method": "DELETE",
+									"uri": "@{variables('ManagementUrl')}/deployments/@{items('For_each_2')?['name']}?api-version=2023-10-01-preview"
+								},
+								"runAfter": {},
+								"type": "Http"
+							}
+						},
+						"foreach": "@body('Filter_array_-_Existing_Deployments')",
+						"runAfter": {
+							"Filter_array_-_Existing_Deployments": [
+								"Succeeded"
+							]
+						},
+						"type": "Foreach"
+					},
+					"HTTP_-_Get_All_Deployments": {
+						"inputs": {
+							"authentication": {
+								"type": "ManagedServiceIdentity"
+							},
+							"method": "GET",
+							"uri": "@{variables('ManagementUrl')}/deployments?api-version=2023-10-01-preview"
+						},
+						"runAfter": {},
+						"type": "Http"
+					},
+					"Parse_JSON_-_Existing_Deployments": {
+						"inputs": {
+							"content": "@body('HTTP_-_Get_All_Deployments')",
+							"schema": {
+								"properties": {
+									"value": {
+										"items": {
+											"properties": {
+												"name": {
+													"type": "string"
+												},
+												"properties": {
+													"properties": {
+														"provisioningState": {
+															"type": "string"
+														}
+													},
+													"type": "object"
+												}
+											},
+											"required": [
+												"name",
+												"properties"
+											],
+											"type": "object"
+										},
+										"type": "array"
+									}
+								},
+								"type": "object"
+							}
+						},
+						"runAfter": {
+							"HTTP_-_Get_All_Deployments": [
+								"Succeeded"
+							]
+						},
+						"type": "ParseJson"
+					}
+				},
+				"runAfter": {
+					"Scope_-_Get_Model_Name": [
+						"Succeeded"
+					]
+				},
+				"type": "Scope"
+			},
+			"Scope_-_Get_Model_Name": {
+				"actions": {
+					"Compose_-_Get_Model_Name": {
+						"inputs": "@body('Filter_array_-_Model_Deployment')[0]?['fine_tuned_model']",
+						"runAfter": {
+							"Filter_array_-_Model_Deployment": [
+								"Succeeded"
+							]
+						},
+						"type": "Compose"
+					},
+					"Filter_array_-_Model_Deployment": {
+						"inputs": {
+							"from": "@body('Parse_JSON_-_Model_Name')?['data']",
+							"where": "@equals(item()?['id'], body('Parse_JSON_-_Model_Creation')?['id'])"
+						},
+						"runAfter": {
+							"Parse_JSON_-_Model_Name": [
+								"Succeeded"
+							]
+						},
+						"type": "Query"
+					},
+					"HTTP_-_Get_model_name": {
+						"inputs": {
+							"authentication": {
+								"audience": "https://cognitiveservices.azure.com",
+								"type": "ManagedServiceIdentity"
+							},
+							"method": "GET",
+							"uri": "https://@{variables('OpenAIName')}.openai.azure.com/openai/fine_tuning/jobs?api-version=2023-09-15-preview"
+						},
+						"runAfter": {},
+						"type": "Http"
+					},
+					"Parse_JSON_-_Model_Name": {
+						"inputs": {
+							"content": "@body('HTTP_-_Get_model_name')",
+							"schema": {
+								"properties": {
+									"data": {
+										"items": {
+											"properties": {
+												"fine_tuned_model": {
+													"type": "string"
+												},
+												"id": {
+													"type": "string"
+												},
+												"training_file": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"fine_tuned_model",
+												"training_file",
+												"id"
+											],
+											"type": "object"
+										},
+										"type": "array"
+									}
+								},
+								"type": "object"
+							}
+						},
+						"runAfter": {
+							"HTTP_-_Get_model_name": [
+								"Succeeded"
+							]
+						},
+						"type": "ParseJson"
+					}
+				},
+				"runAfter": {
+					"Scope_-_Create_Custom_Model": [
+						"Succeeded"
+					]
+				},
+				"type": "Scope"
+			},
+			"Scope_-_Uploading_Dataset": {
+				"actions": {
+					"HTTP_-_Upload_Dataset": {
+						"inputs": {
+							"authentication": {
+								"audience": "https://cognitiveservices.azure.com",
+								"type": "ManagedServiceIdentity"
+							},
+							"body": {
+								"content_url": "@{body('Create_SAS_URI_by_path_(V2)')?['WebUrl']}",
+								"filename": "@{body('Parse_JSON')?['Name']}",
+								"purpose": "fine-tune"
+							},
+							"method": "POST",
+							"uri": "https://@{variables('OpenAIName')}.openai.azure.com/openai/files/import/?api-version=2023-09-15-preview"
+						},
+						"runAfter": {},
+						"type": "Http"
+					},
+					"Parse_JSON_-_File_ID": {
+						"inputs": {
+							"content": "@body('HTTP_-_Upload_Dataset')",
+							"schema": {
+								"properties": {
+									"filename": {
+										"type": "string"
+									},
+									"id": {
+										"type": "string"
+									},
+									"status": {
+										"type": "string"
+									}
+								},
+								"type": "object"
+							}
+						},
+						"runAfter": {
+							"HTTP_-_Upload_Dataset": [
+								"Succeeded"
+							]
+						},
+						"type": "ParseJson"
+					},
+					"Until": {
+						"actions": {
+							"Delay": {
+								"inputs": {
+									"interval": {
+										"count": 10,
+										"unit": "Second"
+									}
+								},
+								"runAfter": {},
+								"type": "Wait"
+							},
+							"Filter_array_by_Filename": {
+								"inputs": {
+									"from": "@body('Parse_JSON_-_Status')?['data']",
+									"where": "@equals(item()?['id'], body('Parse_JSON_-_File_ID')?['id'])"
+								},
+								"runAfter": {
+									"Parse_JSON_-_Status": [
+										"Succeeded"
+									]
+								},
+								"type": "Query"
+							},
+							"For_each": {
+								"actions": {
+									"Set_variable_-_Status": {
+										"inputs": {
+											"name": "UploadStatus",
+											"value": "@items('For_each')?['status']"
+										},
+										"runAfter": {},
+										"type": "SetVariable"
+									}
+								},
+								"description": "We might have 0 record in list due to API latency, use foreach action to avoid complex error handling for empty array",
+								"foreach": "@body('Parse_JSON_-_Status')?['data']",
+								"runAfter": {
+									"Filter_array_by_Filename": [
+										"Succeeded"
+									]
+								},
+								"type": "Foreach"
+							},
+							"HTTP_-_Get_Uploading_status": {
+								"inputs": {
+									"authentication": {
+										"audience": "https://cognitiveservices.azure.com",
+										"type": "ManagedServiceIdentity"
+									},
+									"method": "GET",
+									"uri": "https://@{variables('OpenAIName')}.openai.azure.com/openai/files/?api-version=2023-09-15-preview"
+								},
+								"runAfter": {
+									"Delay": [
+										"Succeeded"
+									]
+								},
+								"type": "Http"
+							},
+							"Parse_JSON_-_Status": {
+								"inputs": {
+									"content": "@body('HTTP_-_Get_Uploading_status')",
+									"schema": {
+										"properties": {
+											"data": {
+												"items": {
+													"properties": {
+														"filename": {
+															"type": "string"
+														},
+														"id": {
+															"type": "string"
+														},
+														"purpose": {
+															"type": "string"
+														},
+														"status": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"status",
+														"purpose",
+														"filename",
+														"id"
+													],
+													"type": "object"
+												},
+												"type": "array"
+											}
+										},
+										"type": "object"
+									}
+								},
+								"runAfter": {
+									"HTTP_-_Get_Uploading_status": [
+										"Succeeded"
+									]
+								},
+								"type": "ParseJson"
+							}
+						},
+						"expression": "@equals(variables('UploadStatus'), 'processed')",
+						"limit": {
+							"count": 60,
+							"timeout": "PT1H"
+						},
+						"runAfter": {
+							"Parse_JSON_-_File_ID": [
+								"Succeeded"
+							]
+						},
+						"type": "Until"
+					}
+				},
+				"runAfter": {
+					"Create_SAS_URI_by_path_(V2)": [
+						"Succeeded"
+					]
+				},
+				"type": "Scope"
+			}
+		},
+		"contentVersion": "1.0.0.0",
+		"outputs": {},
+		"parameters": {
+			"$connections": {
+				"defaultValue": {},
+				"type": "Object"
+			}
+		},
+		"triggers": {
+			"manual": {
+				"inputs": {
+					"schema": {}
+				},
+				"kind": "Http",
+				"type": "Request"
+			}
+		}
+	},
+	"parameters": {
+		"$connections": {}
+	}
+}

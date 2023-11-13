@@ -1,0 +1,321 @@
+{
+	"definition": {
+		"$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+		"actions": {
+			"Convert_time_zone": {
+				"inputs": {
+					"baseTime": "@{utcNow()}",
+					"destinationTimeZone": "China Standard Time",
+					"formatString": "yyyyMMdd",
+					"sourceTimeZone": "UTC"
+				},
+				"kind": "ConvertTimeZone",
+				"runAfter": {
+					"Until": [
+						"Succeeded"
+					]
+				},
+				"type": "Expression"
+			},
+			"Create_blob_(V2)": {
+				"inputs": {
+					"body": "@variables('TrainingData')",
+					"headers": {
+						"ReadFileMetadataFromServer": true
+					},
+					"host": {
+						"connection": {
+							"name": "@parameters('$connections')['azureblob']['connectionId']"
+						}
+					},
+					"method": "post",
+					"path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/files",
+					"queries": {
+						"folderPath": "/trainingdata",
+						"name": "@{body('Convert_time_zone')}.jsonl",
+						"queryParametersSingleEncoded": true
+					}
+				},
+				"runAfter": {
+					"Convert_time_zone": [
+						"Succeeded"
+					]
+				},
+				"runtimeConfiguration": {
+					"contentTransfer": {
+						"transferMode": "Chunked"
+					}
+				},
+				"type": "ApiConnection"
+			},
+			"Initialize_variable_-_Converted_Data": {
+				"inputs": {
+					"variables": [
+						{
+							"name": "TrainingData",
+							"type": "string"
+						}
+					]
+				},
+				"runAfter": {
+					"Initialize_variable_-_Table_Base_Url": [
+						"Succeeded"
+					]
+				},
+				"type": "InitializeVariable"
+			},
+			"Initialize_variable_-_Next_Link": {
+				"inputs": {
+					"variables": [
+						{
+							"name": "NextLink",
+							"type": "string",
+							"value": "@variables('TableBaseUrl')"
+						}
+					]
+				},
+				"runAfter": {
+					"Initialize_variable_-_Converted_Data": [
+						"Succeeded"
+					]
+				},
+				"type": "InitializeVariable"
+			},
+			"Initialize_variable_-_Table_Base_Url": {
+				"inputs": {
+					"variables": [
+						{
+							"name": "TableBaseUrl",
+							"type": "string",
+							"value": "https://[StorageName].table.core.windows.net/[TableName]?$select=Question,Answer"
+						}
+					]
+				},
+				"runAfter": {},
+				"type": "InitializeVariable"
+			},
+			"Insert_or_Replace_Entity_(V2)": {
+				"inputs": {
+					"body": {
+						"Name": "@{body('Create_blob_(V2)')?['Name']}",
+						"Path": "@{body('Create_blob_(V2)')?['Path']}"
+					},
+					"host": {
+						"connection": {
+							"name": "@parameters('$connections')['azuretables']['connectionId']"
+						}
+					},
+					"method": "put",
+					"path": "/v2/storageAccounts/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/tables/@{encodeURIComponent('GeneratedData')}/entities(PartitionKey='@{encodeURIComponent('LatestDataset')}',RowKey='@{encodeURIComponent('LatestDataset')}')"
+				},
+				"runAfter": {
+					"Create_blob_(V2)": [
+						"Succeeded"
+					]
+				},
+				"type": "ApiConnection"
+			},
+			"Until": {
+				"actions": {
+					"Condition": {
+						"actions": {
+							"Set_variable_-_Next_Link": {
+								"inputs": {
+									"name": "NextLink",
+									"value": "@{variables('TableBaseUrl')}&NextPartitionKey=@{body('Parse_JSON_-_ContinueToken')?['x-ms-continuation-NextPartitionKey']}&NextRowKey=@{body('Parse_JSON_-_ContinueToken')?['x-ms-continuation-NextRowKey']}"
+								},
+								"runAfter": {},
+								"type": "SetVariable"
+							}
+						},
+						"else": {
+							"actions": {
+								"Set_variable": {
+									"inputs": {
+										"name": "NextLink",
+										"value": "@{null}"
+									},
+									"runAfter": {},
+									"type": "SetVariable"
+								}
+							}
+						},
+						"expression": {
+							"and": [
+								{
+									"not": {
+										"equals": [
+											"@body('Parse_JSON_-_ContinueToken')?['x-ms-continuation-NextPartitionKey']",
+											"@null"
+										]
+									}
+								},
+								{
+									"not": {
+										"equals": [
+											"@body('Parse_JSON_-_ContinueToken')?['x-ms-continuation-NextRowKey']",
+											"@null"
+										]
+									}
+								}
+							]
+						},
+						"runAfter": {
+							"Parse_JSON_-_ContinueToken": [
+								"Succeeded"
+							]
+						},
+						"type": "If"
+					},
+					"For_each": {
+						"actions": {
+							"Append_to_string_variable": {
+								"inputs": {
+									"name": "TrainingData",
+									"value": "@concat(outputs('Compose_-_Prompt'), '\r\n')"
+								},
+								"runAfter": {
+									"Compose_-_Prompt": [
+										"Succeeded"
+									]
+								},
+								"type": "AppendToStringVariable"
+							},
+							"Compose_-_Prompt": {
+								"inputs": {
+									"messages": [
+										{
+											"content": "You are an AI assistant that helps people find information.",
+											"role": "system"
+										},
+										{
+											"content": "@{items('For_each')?['Question']}",
+											"role": "user"
+										},
+										{
+											"content": "@{items('For_each')?['Answer']}",
+											"role": "assistant"
+										}
+									]
+								},
+								"runAfter": {},
+								"type": "Compose"
+							}
+						},
+						"foreach": "@body('Parse_JSON')?['value']",
+						"runAfter": {
+							"Parse_JSON": [
+								"Succeeded"
+							]
+						},
+						"type": "Foreach"
+					},
+					"HTTP": {
+						"inputs": {
+							"authentication": {
+								"audience": "https://storage.azure.com/",
+								"type": "ManagedServiceIdentity"
+							},
+							"headers": {
+								"Accept": "application/json;odata=nometadata",
+								"Content-Type": "application/json",
+								"x-ms-version": "2023-11-03"
+							},
+							"method": "GET",
+							"uri": "@variables('NextLink')"
+						},
+						"runAfter": {},
+						"type": "Http"
+					},
+					"Parse_JSON": {
+						"inputs": {
+							"content": "@body('HTTP')",
+							"schema": {
+								"properties": {
+									"value": {
+										"items": {
+											"properties": {
+												"Answer": {
+													"type": "string"
+												},
+												"Question": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"Answer",
+												"Question"
+											],
+											"type": "object"
+										},
+										"type": "array"
+									}
+								},
+								"type": "object"
+							}
+						},
+						"runAfter": {
+							"HTTP": [
+								"Succeeded"
+							]
+						},
+						"type": "ParseJson"
+					},
+					"Parse_JSON_-_ContinueToken": {
+						"inputs": {
+							"content": "@outputs('HTTP')['headers']",
+							"schema": {
+								"properties": {
+									"x-ms-continuation-NextPartitionKey": {
+										"type": "string"
+									},
+									"x-ms-continuation-NextRowKey": {
+										"type": "string"
+									}
+								},
+								"type": "object"
+							}
+						},
+						"runAfter": {
+							"For_each": [
+								"Succeeded"
+							]
+						},
+						"type": "ParseJson"
+					}
+				},
+				"expression": "@equals(variables('NextLink'), '')",
+				"limit": {
+					"count": 100,
+					"timeout": "PT1H"
+				},
+				"runAfter": {
+					"Initialize_variable_-_Next_Link": [
+						"Succeeded"
+					]
+				},
+				"type": "Until"
+			}
+		},
+		"contentVersion": "1.0.0.0",
+		"outputs": {},
+		"parameters": {
+			"$connections": {
+				"defaultValue": {},
+				"type": "Object"
+			}
+		},
+		"triggers": {
+			"manual": {
+				"inputs": {
+					"schema": {}
+				},
+				"kind": "Http",
+				"type": "Request"
+			}
+		}
+	},
+	"parameters": {
+		"$connections": {}
+	}
+}

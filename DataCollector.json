@@ -1,0 +1,87 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "actions": {
+            "Compose": {
+                "inputs": "@guid()",
+                "runAfter": {
+                    "Get_response_details": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "Compose"
+            },
+            "Get_response_details": {
+                "inputs": {
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['microsoftforms']['connectionId']"
+                        }
+                    },
+                    "method": "get",
+                    "path": "/formapi/api/forms('@{encodeURIComponent('v4j5cvGGr0GRqy180BHbRzZ2qvXyQOlAjdu2q9GpD4BUQVZNNlY3VllGOE9YOFNPRTVFVUFKUDkyMy4u')}')/responses",
+                    "queries": {
+                        "response_id": "@triggerBody()?['resourceData']?['responseId']"
+                    }
+                },
+                "runAfter": {},
+                "type": "ApiConnection"
+            },
+            "Insert_Entity_(V2)": {
+                "inputs": {
+                    "body": {
+                        "Answer": "@{body('Get_response_details')?['r9f9369c2eb2540d888b9f8199b3f4cdd']}",
+                        "Contributor": "@{body('Get_response_details')?['responder']}",
+                        "PartitionKey": "@{outputs('Compose')}",
+                        "Question": "@{body('Get_response_details')?['r052f91ab4a044684bfc47a6e5aac46cd']}",
+                        "RowKey": "@{outputs('Compose')}"
+                    },
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['azuretables']['connectionId']"
+                        }
+                    },
+                    "method": "post",
+                    "path": "/v2/storageAccounts/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/tables/@{encodeURIComponent('DataForTraining')}/entities"
+                },
+                "runAfter": {
+                    "Compose": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "ApiConnection"
+            }
+        },
+        "contentVersion": "1.0.0.0",
+        "outputs": {},
+        "parameters": {
+            "$connections": {
+                "defaultValue": {},
+                "type": "Object"
+            }
+        },
+        "triggers": {
+            "When_a_new_response_is_submitted": {
+                "inputs": {
+                    "body": {
+                        "eventType": "responseAdded",
+                        "notificationUrl": "@{listCallbackUrl()}",
+                        "source": "ms-connector"
+                    },
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['microsoftforms']['connectionId']"
+                        }
+                    },
+                    "path": "/formapi/api/forms/@{encodeURIComponent('v4j5cvGGr0GRqy180BHbRzZ2qvXyQOlAjdu2q9GpD4BUQVZNNlY3VllGOE9YOFNPRTVFVUFKUDkyMy4u')}/webhooks"
+                },
+                "splitOn": "@triggerBody()?['value']",
+                "type": "ApiConnectionWebhook"
+            }
+        }
+    },
+    "parameters": {
+        "$connections": {
+        }
+    }
+}
